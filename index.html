@@ -5,9 +5,15 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Neon Hand Tracker</title>
   <!-- Main Libraries -->
-  <script src="https://cdn.jsdelivr.net/npm/p5@1.9.0/lib/p5.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/p5@1.9.0/lib/p5.js" onerror="handleScriptError('p5.js')"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous" onerror="handleScriptError('MediaPipe Hands')"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous" onerror="handleScriptError('MediaPipe Camera')"></script>
+  
+  <script>
+    function handleScriptError(lib) {
+      alert('Failed to load ' + lib + '. Please check your internet connection.');
+    }
+  </script>
   
   <style>
     :root {
@@ -122,6 +128,30 @@
       margin-bottom: 24px;
     }
 
+    .loader-container {
+      width: 240px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .progress-bar {
+      width: 100%;
+      height: 4px;
+      background: rgba(0, 251, 255, 0.1);
+      border-radius: 2px;
+      overflow: hidden;
+    }
+
+    .progress-fill {
+      width: 0%;
+      height: 100%;
+      background: var(--cyan);
+      box-shadow: 0 0 10px var(--cyan);
+      transition: width 0.3s ease;
+    }
+
     @keyframes spin {
       to { transform: rotate(360deg); }
     }
@@ -208,7 +238,12 @@
   
   <div id="loading-overlay">
     <div class="loader"></div>
-    <div class="label" id="loader-status">Initializing Neural Engine...</div>
+    <div class="loader-container">
+      <div class="label" id="loader-status">Initializing Neural Engine...</div>
+      <div class="progress-bar">
+        <div id="progress-fill" class="progress-fill"></div>
+      </div>
+    </div>
     <div id="error-container" class="error-msg">
       <div class="error-icon">!</div>
       <div id="error-text">
@@ -262,6 +297,7 @@
     const LERP_FACTOR = 0.22;
     const COLLISION_DIST = isMobile ? 32 : 45;
     const PARTICLE_MOD = isMobile ? 0.45 : 1.0;
+    const TRAIL_MAX = Math.floor(12 * PARTICLE_MOD);
     
     let hands, camera, videoElement;
     let detections = null;
@@ -525,7 +561,27 @@
     // --- core logic ---
 
     async function initMediaPipe() {
+      const loaderStatus = document.getElementById('loader-status');
+      const progressFill = document.getElementById('progress-fill');
+      const errorContainer = document.getElementById('error-container');
+      const errorText = document.getElementById('error-text');
+      const loader = document.querySelector('.loader');
+
+      if (!window.isSecureContext) {
+        loaderStatus.style.display = 'none';
+        loader.style.display = 'none';
+        errorText.innerText = 'SECURITY_ERROR: Camera access requires a secure context (HTTPS). Localhost or HTTPS is mandatory.';
+        errorContainer.style.display = 'flex';
+        return;
+      }
+
+      const updateProgress = (pct, text) => {
+        progressFill.style.width = `${pct}%`;
+        if (text) loaderStatus.innerText = text;
+      };
+
       try {
+        updateProgress(10, 'Initializing Neural Engine...');
         hands = new Hands({
           locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
         });
@@ -537,6 +593,7 @@
           minTrackingConfidence: 0.55
         });
 
+        updateProgress(30, 'Configuring Biometrics...');
         hands.onResults(res => {
           detections = res;
           let nL = null, nR = null;
@@ -549,28 +606,32 @@
           targetsL = nL; targetsR = nR;
         });
 
+        updateProgress(60, 'Connecting to Optical Input...');
+        
         camera = new Camera(videoElement, {
           onFrame: async () => await hands.send({image: videoElement}),
           width: 1280, height: 720
         });
         
+        updateProgress(85, 'Calibrating Sensors...');
         await camera.start();
+        updateProgress(100, 'Link Established');
+        console.log('Neural link established.');
       } catch (e) {
-        console.error(e);
-        document.getElementById('loader-status').style.display = 'none';
-        const errorContainer = document.getElementById('error-container');
-        const errorText = document.getElementById('error-text');
+        console.error('Neural init failed:', e);
+        loaderStatus.style.display = 'none';
+        loader.style.display = 'none';
         
         if (e.name === 'NotAllowedError' || e.message?.includes('permission')) {
-          errorText.innerText = 'NEURAL_LINK_BLOCKED: Camera permission was denied. Enable access in your browser settings to proceed.';
+          errorText.innerText = 'NEURAL_LINK_BLOCKED: Camera permission was denied. Please allow camera access in browser settings.';
         } else if (e.name === 'NotFoundError' || e.message?.includes('not found')) {
-          errorText.innerText = 'HARDWARE_ERROR: No camera device detected. Connect a video input to continue.';
+          errorText.innerText = 'HARDWARE_ERROR: No camera device detected. Connect a video source to continue.';
         } else {
-          errorText.innerText = 'CRITICAL_FAILURE: An unexpected error occurred while initializing the neural link.';
+          errorText.innerText = `CRITICAL_FAILURE: ${e.name || 'Unknown Error'} - Initialization failed. Attempting auto-recovery in 3s...`;
+          setTimeout(() => window.location.reload(), 3000);
         }
         
         errorContainer.style.display = 'flex';
-        document.querySelector('.loader').style.display = 'none';
       }
     }
 
