@@ -1,0 +1,9 @@
+{
+  "name": "Neon Hand Tracker",
+  "description": "Real-time futuristic hand tracking using MediaPipe Hands and p5.js. Features glowing neon landmarks and 60fps performance.",
+  "requestFramePermissions": [
+    "camera"
+  ],
+  "majorCapabilities": []
+}
+

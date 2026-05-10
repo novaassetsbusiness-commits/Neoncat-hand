@@ -1,0 +1,652 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Neon Hand Tracker</title>
+  <!-- Main Libraries -->
+  <script src="https://cdn.jsdelivr.net/npm/p5@1.9.0/lib/p5.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+  
+  <style>
+    :root {
+      --bg: #03040a;
+      --cyan: #00fbff;
+      --magenta: #ff00ff;
+      --yellow: #ffff00;
+      --gold: #ffcc00;
+      --error: #ff3333;
+    }
+
+    body {
+      margin: 0;
+      padding: 0;
+      background-color: var(--bg);
+      overflow: hidden;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      width: 100vw;
+      font-family: 'Inter', system-ui, -apple-system, sans-serif;
+      color: white;
+    }
+
+    #overlay-fx {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      z-index: 5;
+    }
+
+    .vignette {
+      background: radial-gradient(circle, transparent 40%, rgba(3, 4, 10, 0.95) 100%);
+    }
+
+    .scanlines {
+      background: linear-gradient(
+        to bottom,
+        rgba(18, 16, 16, 0) 50%,
+        rgba(0, 0, 0, 0.1) 50%
+      );
+      background-size: 100% 4px;
+    }
+
+    .grain {
+      opacity: 0.03;
+      background-image: url("https://www.transparenttextures.com/patterns/p6.png");
+    }
+
+    canvas {
+      display: block;
+    }
+
+    #hud-container {
+      position: absolute;
+      inset: 24px;
+      z-index: 10;
+      pointer-events: none;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      opacity: 0;
+      transition: opacity 1.5s ease;
+    }
+
+    .hud-corner {
+      width: 40px;
+      height: 40px;
+      border: 1px solid rgba(0, 251, 255, 0.2);
+    }
+    
+    .hud-top-left { border-right: none; border-bottom: none; }
+    .hud-top-right { border-left: none; border-bottom: none; }
+    .hud-bottom-left { border-right: none; border-top: none; }
+    .hud-bottom-right { border-left: none; border-top: none; }
+
+    .label {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.2em;
+      opacity: 0.5;
+      margin-bottom: 4px;
+    }
+
+    .value {
+      font-family: monospace;
+      font-size: 14px;
+      color: var(--cyan);
+      text-shadow: 0 0 10px rgba(0, 251, 255, 0.5);
+    }
+
+    #loading-overlay {
+      position: absolute;
+      inset: 0;
+      background: var(--bg);
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      z-index: 100;
+      transition: opacity 0.8s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    .loader {
+      width: 48px;
+      height: 48px;
+      border: 2px solid rgba(0, 251, 255, 0.1);
+      border-top-color: var(--cyan);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      margin-bottom: 24px;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    #controls {
+      position: absolute;
+      bottom: 24px;
+      right: 24px;
+      z-index: 20;
+      display: flex;
+      gap: 12px;
+      pointer-events: auto;
+    }
+
+    .btn {
+      background: rgba(0, 251, 255, 0.1);
+      border: 1px solid rgba(0, 251, 255, 0.3);
+      color: var(--cyan);
+      padding: 8px 16px;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      backdrop-filter: blur(4px);
+    }
+
+    .btn:hover {
+      background: rgba(0, 251, 255, 0.2);
+      border-color: var(--cyan);
+    }
+
+    .error-msg {
+      color: var(--error);
+      font-size: 14px;
+      text-align: center;
+      max-width: 320px;
+      margin-top: 16px;
+      line-height: 1.6;
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      gap: 16px;
+      background: rgba(255, 51, 51, 0.05);
+      padding: 24px;
+      border: 1px solid rgba(255, 51, 51, 0.2);
+      backdrop-filter: blur(10px);
+    }
+
+    .error-icon {
+      width: 40px;
+      height: 40px;
+      border: 2px solid var(--error);
+      border-radius: 50%;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      font-weight: bold;
+      font-size: 20px;
+      box-shadow: 0 0 15px rgba(255, 51, 51, 0.3);
+      margin-bottom: 8px;
+    }
+
+    #video-input {
+      display: none;
+    }
+
+    .debug-toggle {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 10px;
+      color: rgba(255, 255, 255, 0.5);
+      cursor: pointer;
+    }
+
+    .debug-toggle input {
+      margin: 0;
+    }
+  </style>
+</head>
+<body>
+  <div id="overlay-fx" class="vignette scanlines grain"></div>
+  
+  <div id="loading-overlay">
+    <div class="loader"></div>
+    <div class="label" id="loader-status">Initializing Neural Engine...</div>
+    <div id="error-container" class="error-msg">
+      <div class="error-icon">!</div>
+      <div id="error-text">
+        Neural link failed. Camera access is required to track biometrics.
+      </div>
+      <button class="btn" style="color: var(--error); border-color: var(--error); background: rgba(255, 51, 51, 0.1);" onclick="window.location.reload()">Retry Connection</button>
+    </div>
+  </div>
+
+  <div id="hud-container">
+    <div style="display: flex; justify-content: space-between;">
+      <div class="hud-corner hud-top-left">
+        <div style="padding: 12px; min-width: 200px;">
+          <div class="label">System Status</div>
+          <div id="status" class="value">Awaiting Neural Link...</div>
+        </div>
+      </div>
+      <div class="hud-corner hud-top-right">
+        <div style="padding: 12px; text-align: right; min-width: 150px;">
+          <div class="label">Sync Rate</div>
+          <div id="fps" class="value">0 FPS</div>
+        </div>
+      </div>
+    </div>
+    
+    <div id="controls">
+      <label class="debug-toggle">
+        <input type="checkbox" id="debug-check"> 
+        <span>Debug HUD</span>
+      </label>
+      <button class="btn" id="btn-replay">Replay Intro</button>
+      <button class="btn" id="btn-fullscreen">Fullscreen</button>
+    </div>
+
+    <div style="display: flex; justify-content: space-between; align-items: flex-end;">
+      <div class="hud-corner hud-bottom-left"></div>
+      <div class="hud-corner hud-bottom-right">
+        <div style="padding: 12px; text-align: right; opacity: 0.3; font-size: 9px; letter-spacing: 1px;">
+          PROTOTYPE_LINK // BUILD 7TXB
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <video id="video-input" playsinline></video>
+
+  <script type="module">
+    // --- constants & state ---
+    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+    const TIPS_IDX = [4, 8, 12, 16, 20];
+    const LERP_FACTOR = 0.22;
+    const COLLISION_DIST = isMobile ? 32 : 45;
+    const PARTICLE_MOD = isMobile ? 0.45 : 1.0;
+    
+    let hands, camera, videoElement;
+    let detections = null;
+    let targetsL = null, targetsR = null;
+    let smoothL = null, smoothR = null;
+    let prevL = null, prevR = null;
+    let velL = 0, velR = 0;
+    
+    let trailsL = TIPS_IDX.map(() => []);
+    let trailsR = TIPS_IDX.map(() => []);
+    let laserParticles = [];
+    let explosionParticles = [];
+    let ambientParticles = [];
+    
+    let shakeInt = 0, flashInt = 0, nitroAlpha = 0;
+    let lastTime = 0, fpsHistory = [];
+    let showDebug = false;
+
+    // --- modular systems ---
+    
+    class ParticleSystem {
+      static createExplosion(x, y, col) {
+        flashInt = 0.35;
+        shakeInt = isMobile ? 8 : 14;
+        const count = Math.floor(28 * PARTICLE_MOD);
+        for (let i = 0; i < count; i++) {
+          explosionParticles.push({
+            x, y,
+            vx: random(-5, 5), vy: random(-5, 5),
+            size: random(3, 8),
+            alpha: 1.0,
+            color: col,
+            decay: random(0.02, 0.045)
+          });
+        }
+      }
+
+      static updateExplosions() {
+        push();
+        blendMode(ADD);
+        noStroke();
+        explosionParticles = explosionParticles.filter(p => {
+          p.x += p.vx; p.y += p.vy;
+          p.alpha -= p.decay;
+          p.size *= 0.96;
+          fill(red(p.color), green(p.color), blue(p.color), p.alpha * 255);
+          ellipse(p.x, p.y, p.size, p.size);
+          return p.alpha > 0;
+        });
+        pop();
+      }
+
+      static drawAmbient() {
+        push();
+        noStroke();
+        ambientParticles.forEach(p => {
+          p.x = (p.x + p.vx + width) % width;
+          p.y = (p.y + p.vy + height) % height;
+          fill(100, 160, 255, p.alpha * 0.6);
+          ellipse(p.x, p.y, p.size, p.size);
+        });
+        pop();
+      }
+    }
+
+    class LaserSystem {
+      static draw(handL, handR) {
+        push();
+        blendMode(ADD);
+        const combinedVel = (velL + velR) * 0.5;
+        const bloom = map(combinedVel, 0, 45, 0, 25, true);
+
+        TIPS_IDX.forEach((idx, i) => {
+          const p1 = { x: handL[idx].x * width, y: handL[idx].y * height };
+          const p2 = { x: handR[idx].x * width, y: handR[idx].y * height };
+          const d = dist(p1.x, p1.y, p2.x, p2.y);
+          const normD = constrain(d / (width * 0.75), 0, 1);
+          
+          if (d < COLLISION_DIST && frameCount % 2 === 0) {
+            ParticleSystem.createExplosion((p1.x + p2.x) * 0.5, (p1.y + p2.y) * 0.5, this.getColor(normD));
+          }
+
+          const flicker = (noise(frameCount * 0.4, i) - 0.5) * 4;
+          const slack = lerp(110, 5, normD);
+          const wave = sin(frameCount * 0.16 + i) * 12 * (1 - normD);
+          const col = this.getColor(normD);
+          const midX = (p1.x + p2.x) * 0.5;
+          const midY = (p1.y + p2.y) * 0.5 + slack + wave;
+
+          this.renderBeam(p1, p2, midX, midY, col, normD, bloom, flicker);
+          this.emitParticles(p1, p2, midX, midY, col, i);
+        });
+
+        this.updateParticles();
+        pop();
+      }
+
+      static getColor(normD) {
+        if (normD < 0.5) return lerpColor(color('#00fbff'), color('#ff00ff'), normD * 2);
+        return lerpColor(color('#ff00ff'), color('#ffff00'), (normD - 0.5) * 2);
+      }
+
+      static renderBeam(p1, p2, mx, my, col, normD, bloom, jitter) {
+        noFill();
+        const t = lerp(1, 4, normD);
+        
+        // Aberration glow
+        stroke(red(col), 0, 0, 35);
+        strokeWeight(t * 9 + bloom);
+        bezier(p1.x - 2, p1.y, mx - 2, my + jitter, mx - 2, my + jitter, p2.x - 2, p2.y);
+
+        stroke(0, green(col), blue(col), 35);
+        strokeWeight(t * 9 + bloom);
+        bezier(p1.x + 2, p1.y, mx + 2, my + jitter, mx + 2, my + jitter, p2.x + 2, p2.y);
+
+        // Core
+        stroke(col);
+        strokeWeight(t * 2.5 + jitter * 0.5);
+        bezier(p1.x, p1.y, mx, my, mx, my, p2.x, p2.y);
+
+        stroke(255, 200);
+        strokeWeight(t * 0.6);
+        bezier(p1.x, p1.y, mx, my, mx, my, p2.x, p2.y);
+      }
+
+      static emitParticles(p1, p2, mx, my, col, i) {
+        if (frameCount % (isMobile ? 7 : 4) === 0) {
+          laserParticles.push({
+            t: random() > 0.5 ? 0 : 1,
+            dir: random() > 0.5 ? 1 : -1,
+            speed: random(0.015, 0.032),
+            p1: {...p1}, p2: {...p2}, mid: {x: mx, y: my},
+            color: col
+          });
+        }
+      }
+
+      static updateParticles() {
+        laserParticles = laserParticles.filter(p => {
+          p.t += p.speed * p.dir;
+          if (p.t < 0 || p.t > 1) return false;
+          const x = bezierPoint(p.p1.x, p.mid.x, p.mid.x, p.p2.x, p.t);
+          const y = bezierPoint(p.p1.y, p.mid.y, p.mid.y, p.p2.y, p.t);
+          noStroke(); fill(p.color);
+          ellipse(x, y, 3.5, 3.5);
+          fill(255); ellipse(x, y, 1.5, 1.5);
+          return true;
+        });
+      }
+    }
+
+    class HandRenderer {
+      static draw(landmarks, col, isL, vel) {
+        const bloom = map(vel, 0, 45, 0, 18, true);
+        const pulse = sin(frameCount * 0.12) * 2;
+        push();
+        blendMode(ADD);
+
+        // Trails
+        const trails = isL ? trailsL : trailsR;
+        trails.forEach(t => {
+          if (t.length < 2) return;
+          noFill();
+          beginShape();
+          t.forEach((p, j) => {
+            stroke(red(color(col)), green(color(col)), blue(color(col)), map(j, 0, t.length, 120, 0));
+            vertex(p.x, p.y);
+          });
+          endShape();
+        });
+
+        // Bone structure
+        stroke(col);
+        strokeWeight(2 + bloom * 0.1);
+        fill(red(color(col)), green(color(col)), blue(color(col)), 10 + bloom);
+        drawingContext.shadowBlur = 10 + bloom;
+        drawingContext.shadowColor = col;
+        this.connect(landmarks, [[0,1,2,3,4], [0,5,6,7,8], [9,10,11,12], [13,14,15,16], [0,17,18,19,20], [5,9,13,17]]);
+        
+        // Landmarks
+        noStroke();
+        landmarks.forEach((p, i) => {
+          const x = p.x * width, y = p.y * height;
+          fill(col);
+          ellipse(x, y, 5.5 + pulse, 5.5 + pulse);
+          if (TIPS_IDX.includes(i)) {
+            noFill(); stroke(col); strokeWeight(1);
+            ellipse(x, y, 12 + pulse * 2, 12 + pulse * 2);
+          }
+        });
+        pop();
+      }
+
+      static connect(pts, seqs) {
+        seqs.forEach(s => {
+          beginShape();
+          s.forEach(i => vertex(pts[i].x * width, pts[i].y * height));
+          endShape();
+        });
+      }
+    }
+
+    // --- p5.js lifecycle ---
+
+    window.setup = () => {
+      const p5Canvas = createCanvas(window.innerWidth, window.innerHeight);
+      p5Canvas.parent(document.body);
+      videoElement = document.getElementById('video-input');
+      
+      initMediaPipe();
+      initUI();
+
+      // Population ambient
+      for (let i = 0; i < Math.floor(45 * PARTICLE_MOD); i++) {
+        ambientParticles.push({
+          x: random(width), y: random(height),
+          vx: random(-0.25, 0.25), vy: random(-0.25, 0.25),
+          size: random(1, 2.5), alpha: random(50, 140)
+        });
+      }
+
+      pixelDensity(Math.min(window.devicePixelRatio || 1, isMobile ? 1.5 : 2));
+    };
+
+    window.draw = () => {
+      background(3, 4, 10);
+      if (nitroAlpha < 1) nitroAlpha += 0.008;
+      drawingContext.globalAlpha = nitroAlpha;
+
+      ParticleSystem.drawAmbient();
+
+      if (shakeInt > 0) {
+        translate(random(-shakeInt, shakeInt), random(-shakeInt, shakeInt));
+        shakeInt *= 0.88;
+      }
+
+      updateTracking();
+
+      push();
+      translate(width, 0); scale(-1, 1);
+      
+      const activeCount = (smoothL ? 1 : 0) + (smoothR ? 1 : 0);
+      if (activeCount > 0) {
+        if (smoothL) HandRenderer.draw(smoothL, '#00fbff', true, velL);
+        if (smoothR) HandRenderer.draw(smoothR, '#ff00ff', false, velR);
+        if (smoothL && smoothR) LaserSystem.draw(smoothL, smoothR);
+      }
+      pop();
+
+      ParticleSystem.updateExplosions();
+
+      if (flashInt > 0) {
+        push(); blendMode(ADD); fill(255, flashInt * 255);
+        rect(0, 0, width, height); pop();
+        flashInt *= 0.82;
+      }
+
+      updateHUD(activeCount);
+    };
+
+    // --- core logic ---
+
+    async function initMediaPipe() {
+      try {
+        hands = new Hands({
+          locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+        });
+
+        hands.setOptions({
+          maxNumHands: 2,
+          modelComplexity: isMobile ? 0 : 1,
+          minDetectionConfidence: 0.55,
+          minTrackingConfidence: 0.55
+        });
+
+        hands.onResults(res => {
+          detections = res;
+          let nL = null, nR = null;
+          if (res.multiHandLandmarks && res.multiHandedness) {
+            res.multiHandLandmarks.forEach((pts, i) => {
+              if (res.multiHandedness[i].label === 'Left') nL = pts;
+              else nR = pts;
+            });
+          }
+          targetsL = nL; targetsR = nR;
+        });
+
+        camera = new Camera(videoElement, {
+          onFrame: async () => await hands.send({image: videoElement}),
+          width: 1280, height: 720
+        });
+        
+        await camera.start();
+      } catch (e) {
+        console.error(e);
+        document.getElementById('loader-status').style.display = 'none';
+        const errorContainer = document.getElementById('error-container');
+        const errorText = document.getElementById('error-text');
+        
+        if (e.name === 'NotAllowedError' || e.message?.includes('permission')) {
+          errorText.innerText = 'NEURAL_LINK_BLOCKED: Camera permission was denied. Enable access in your browser settings to proceed.';
+        } else if (e.name === 'NotFoundError' || e.message?.includes('not found')) {
+          errorText.innerText = 'HARDWARE_ERROR: No camera device detected. Connect a video input to continue.';
+        } else {
+          errorText.innerText = 'CRITICAL_FAILURE: An unexpected error occurred while initializing the neural link.';
+        }
+        
+        errorContainer.style.display = 'flex';
+        document.querySelector('.loader').style.display = 'none';
+      }
+    }
+
+    function updateTracking() {
+      const smooth = (curr, target) => {
+        if (!target) return null;
+        if (!curr) return target.map(p => ({...p}));
+        return curr.map((p, i) => ({
+          x: lerp(p.x, target[i].x, LERP_FACTOR),
+          y: lerp(p.y, target[i].y, LERP_FACTOR),
+          z: lerp(p.z, target[i].z, LERP_FACTOR)
+        }));
+      };
+
+      prevL = smoothL ? smoothL.map(p => ({...p})) : null;
+      prevR = smoothR ? smoothR.map(p => ({...p})) : null;
+
+      smoothL = smooth(smoothL, targetsL);
+      smoothR = smooth(smoothR, targetsR);
+
+      const getVel = (c, p) => (c && p) ? dist(c[9].x, c[9].y, p[9].x, p[9].y) * 800 : 0;
+      velL = lerp(velL, getVel(smoothL, prevL), 0.12);
+      velR = lerp(velR, getVel(smoothR, prevR), 0.12);
+
+      const updTrails = (s, t) => {
+        if (!s) { t.forEach(tr => tr.length = 0); return; }
+        TIPS_IDX.forEach((idx, i) => {
+          t[i].unshift({ x: s[idx].x * width, y: s[idx].y * height });
+          if (t[i].length > TRAIL_MAX) t[i].pop();
+        });
+      };
+      updTrails(smoothL, trailsL); updTrails(smoothR, trailsR);
+    }
+
+    function initUI() {
+      document.getElementById('btn-replay').onclick = () => {
+        nitroAlpha = 0;
+      };
+      document.getElementById('btn-fullscreen').onclick = () => {
+        if (!document.fullscreenElement) document.documentElement.requestFullscreen();
+        else document.exitFullscreen();
+      };
+      document.getElementById('debug-check').onchange = (e) => {
+        showDebug = e.target.checked;
+        document.getElementById('fps').style.opacity = showDebug ? '1' : '0';
+        document.querySelectorAll('.label').forEach(l => l.style.opacity = showDebug ? '0.6' : '0.2');
+      };
+      window.onresize = () => resizeCanvas(window.innerWidth, window.innerHeight);
+    }
+
+    function updateHUD(activeCount) {
+      if (detections && detections.multiHandLandmarks?.length > 0) {
+        const overlay = document.getElementById('loading-overlay');
+        if (overlay.style.display !== 'none') {
+          overlay.style.opacity = '0';
+          document.getElementById('hud-container').style.opacity = '1';
+          setTimeout(() => overlay.style.display = 'none', 800);
+        }
+      }
+      
+      const statusEl = document.getElementById('status');
+      if (activeCount > 0) statusEl.innerText = `${activeCount} ENGINE_LINK ACTIVE`;
+      else statusEl.innerText = 'SCANNING FOR BIOMETRICS...';
+
+      if (showDebug) {
+        const now = performance.now();
+        const fpsValue = Math.round(1000 / (now - lastTime));
+        lastTime = now;
+        fpsHistory.push(fpsValue);
+        if (fpsHistory.length > 30) fpsHistory.shift();
+        const avg = Math.round(fpsHistory.reduce((a, b) => a + b) / fpsHistory.length);
+        document.getElementById('fps').innerText = `${avg} Hz`;
+      } else {
+        lastTime = performance.now();
+      }
+    }
+  </script>
+</body>
+</html>
